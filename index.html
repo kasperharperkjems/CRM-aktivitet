@@ -148,6 +148,10 @@
       cvr: "text_mm52k0gx",
       manager: "multiple_person_mm52jj7",
       contacts: "account_contact",
+      contactName: "text_mm52eycb",
+      contactRole: "text_mm52t2y7",
+      contactPhone: "phone_mm524frr",
+      contactEmail: "email_mm5251qc",
       location: "location_mm5276tz",
       activities: "board_relation_mm5h2vaa"
     };
@@ -158,6 +162,10 @@
       manager: "person",
       managerText: "text_mm52kq25",
       contacts: "board_relation_mm53d775",
+      contactName: "text_mm52sara",
+      contactRole: "text_mm52qa15",
+      contactPhone: "phone_mm52mfka",
+      contactEmail: "email_mm528kd2",
       location: "location_mm526x1f",
       activities: "board_relation_mm5hnqk9"
     };
@@ -210,6 +218,22 @@
       if (typeof column.display_value === "string" && column.display_value.trim()) return column.display_value;
       if (Array.isArray(column.linked_items) && column.linked_items.length) return column.linked_items.map(i => i.name).join(", ");
       return "—";
+    }
+
+    function directContactText(cols, map) {
+      const name = cols[map.contactName]?.text?.trim() || "";
+      const role = cols[map.contactRole]?.text?.trim() || "";
+      const email = cols[map.contactEmail]?.text?.trim() || "";
+      const phone = cols[map.contactPhone]?.text?.trim() || "";
+
+      if (!name && !role && !email && !phone) return "—";
+
+      const lines = [];
+      if (name) lines.push(role ? `${name} · ${role}` : name);
+      else if (role) lines.push(role);
+      if (email) lines.push(email);
+      if (phone) lines.push(phone);
+      return lines.join("\n");
     }
 
     function relationIds(column) {
@@ -353,13 +377,20 @@
 
       const contactsCol = isSubitem ? sourceCols[SUBITEM_COL.contacts] : parentCols[COMPANY_COL.contacts];
       const locationCol = isSubitem ? sourceCols[SUBITEM_COL.location] : parentCols[COMPANY_COL.location];
+      const relationContactText = relationNames(contactsCol);
+      const contactText = relationContactText !== "—"
+        ? relationContactText
+        : directContactText(
+            isSubitem ? sourceCols : parentCols,
+            isSubitem ? SUBITEM_COL : COMPANY_COL
+          );
 
       el("company").textContent = parentCompany.name;
       el("company").classList.remove("loading");
       el("cvr").textContent = cvr;
       el("pnumber").textContent = pnumber;
       el("manager").textContent = managerText;
-      el("contacts").textContent = relationNames(contactsCol);
+      el("contacts").textContent = contactText;
       el("address").textContent = locationText(locationCol);
 
       if (isSubitem) {
@@ -446,7 +477,6 @@
         const created = result?.create_item;
         if (!created?.id) throw new Error("Aktiviteten blev ikke oprettet.");
 
-        // Sørg for, at aktivitetshistorikken kan ses fra hovedvirksomheden.
         await preserveAndLink(
           COMPANY_BOARD_ID,
           parentCompany.id,
@@ -455,7 +485,6 @@
           created.id
         );
 
-        // Ved arbejdssted: link også aktiviteten direkte til subitemets Activities-relation.
         if (isSubitem) {
           await preserveAndLink(
             SUBITEM_BOARD_ID,
