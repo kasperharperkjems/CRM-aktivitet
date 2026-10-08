@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Opret ny aktivitet</title>
+  <script src="https://cdn.jsdelivr.net/npm/monday-sdk-js/dist/main.js"></script>
+  <style>
+    :root { font-family: Inter, Arial, sans-serif; color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 18px; background: transparent; color: var(--primary-text-color, inherit); }
+    .card { max-width: 760px; margin: 0 auto; padding: 20px; border-radius: 12px; background: var(--primary-background-color, transparent); }
+    h1 { margin: 0 0 4px; font-size: 22px; }
+    .intro { margin: 0 0 18px; opacity: .66; font-size: 13px; }
+    .section { margin-top: 18px; padding-top: 18px; border-top: 1px solid rgba(128,128,128,.25); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .full { grid-column: 1 / -1; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+    .hint { margin-top: 5px; font-size: 11px; opacity: .58; }
+    input, select, .readonly { width: 100%; min-height: 42px; border: 1px solid rgba(128,128,128,.38); border-radius: 9px; padding: 10px 11px; font: inherit; background: var(--secondary-background-color, transparent); color: inherit; }
+    input:focus, select:focus { outline: 2px solid rgba(97,97,255,.35); border-color: #6161ff; }
+    .readonly { opacity: .78; cursor: default; }
+    .readonly.multiline { min-height: 48px; white-space: pre-wrap; }
+    .row-title { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .badge { display:inline-block; font-size:11px; font-weight:600; padding:3px 7px; border-radius:999px; background: rgba(97,97,255,.12); }
+    button { width: 100%; border: 0; border-radius: 9px; padding: 12px 16px; font: inherit; font-weight: 700; cursor: pointer; background: #6161ff; color: white; }
+    button:disabled { opacity: .52; cursor: wait; }
+    .statusbox { margin-top: 14px; padding: 11px 12px; border-radius: 8px; display: none; }
+    .statusbox.ok { display:block; background: rgba(0,180,100,.12); }
+    .statusbox.err { display:block; background: rgba(220,60,60,.12); }
+    .loading { opacity: .7; }
+    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } .full { grid-column: auto; } }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Opret ny aktivitet</h1>
+    <p class="intro">Opret en ny mødeaktivitet på Aktiviteter-tavlen.</p>
+
+    <form id="activityForm">
+      <div class="grid">
+        <div class="full">
+          <div class="row-title">
+            <label for="activityName">Aktivitetsnavn</label>
+            <span class="badge">Automatisk udfyldt · kan ændres</span>
+          </div>
+          <input id="activityName" type="text" required autocomplete="off" />
+        </div>
+
+        <div>
+          <label for="type">Mødetype *</label>
+          <select id="type" required>
+            <option value="">– Vælg mødetype –</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="activityStatus">Status *</label>
+          <select id="activityStatus" required>
+            <option value="Skal bookes">Skal bookes</option>
+            <option value="Kommende møde">Kommende møde</option>
+            <option value="Afholdt møde">Afholdt møde</option>
+            <option value="Aflyst møde">Aflyst møde</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="date">Mødedato *</label>
+          <input id="date" type="date" required />
+        </div>
+
+        <div>
+          <label for="time">Tidspunkt *</label>
+          <input id="time" type="time" required />
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="grid">
+          <div id="workplaceWrap" class="full" style="display:none">
+            <label>Arbejdssted</label>
+            <div id="workplace" class="readonly"></div>
+          </div>
+
+          <div>
+            <label>Virksomhed (låst)</label>
+            <div id="company" class="readonly loading">Henter…</div>
+          </div>
+
+          <div>
+            <label>CVR (forudfyldt)</label>
+            <div id="cvr" class="readonly">—</div>
+          </div>
+
+          <div>
+            <label>P-nummer</label>
+            <div id="pnumber" class="readonly">—</div>
+          </div>
+
+          <div>
+            <label>Kundechef</label>
+            <div id="manager" class="readonly">—</div>
+          </div>
+
+          <div class="full">
+            <label>Kontakter</label>
+            <div id="contacts" class="readonly multiline">—</div>
+            <div class="hint">Vises som kontekst fra virksomheden/arbejdsstedet og ændres ikke her.</div>
+          </div>
+
+          <div class="full">
+            <label>Adresse (reel lokation)</label>
+            <div id="address" class="readonly multiline">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <button id="submit" type="submit" disabled>Opret aktivitet</button>
+      </div>
+    </form>
+
+    <div id="statusBox" class="statusbox"></div>
+  </main>
+
+  <script>
+    const monday = mondaySdk();
+
+    const COMPANY_BOARD_ID = 5097412516;
+    const SUBITEM_BOARD_ID = 5099929375;
+    const ACTIVITY_BOARD_ID = 5097412508;
+    const ACTIVITY_GROUP_ID = "topics";
+
+    const COMPANY_COL = {
+      cvr: "text_mm52k0gx",
+      manager: "multiple_person_mm52jj7",
+      contacts: "account_contact",
+      location: "location_mm5276tz",
+      activities: "board_relation_mm5h2vaa"
+    };
+
+    const SUBITEM_COL = {
+      cvrLegacy: "text_mm52skzc",
+      pnumber: "text_mm52j8q0",
+      manager: "person",
+      managerText: "text_mm52kq25",
+      contacts: "board_relation_mm53d775",
+      location: "location_mm526x1f",
+      activities: "board_relation_mm5hnqk9"
+    };
+
+    const ACTIVITY_COL = {
+      account: "board_relation_mm5h6fj",
+      type: "activity_type",
+      date: "activity_start_time",
+      status: "activity_status",
+      cvr: "text_mm5pe9gw",
+      pnumber: "text_mm577408",
+      manager: "multiple_person_mm5hhnzx",
+      location: "location_mm5hw58c"
+    };
+
+    let appContext = null;
+    let sourceItem = null;
+    let parentCompany = null;
+    let isSubitem = false;
+    let autoName = "";
+    let nameTouched = false;
+
+    const el = id => document.getElementById(id);
+    const form = el("activityForm");
+    const submitBtn = el("submit");
+    const statusBox = el("statusBox");
+    const nameInput = el("activityName");
+    const typeSelect = el("type");
+
+    const now = new Date();
+    el("date").value = now.toISOString().slice(0, 10);
+    el("time").value = "10:00";
+
+    function showStatus(message, ok) {
+      statusBox.textContent = message;
+      statusBox.className = `statusbox ${ok ? "ok" : "err"}`;
+    }
+
+    function safeText(value, fallback = "—") {
+      const text = String(value ?? "").trim();
+      return text || fallback;
+    }
+
+    function byId(item) {
+      return Object.fromEntries((item?.column_values || []).map(c => [c.id, c]));
+    }
+
+    function relationNames(column) {
+      if (!column) return "—";
+      if (typeof column.display_value === "string" && column.display_value.trim()) return column.display_value;
+      if (Array.isArray(column.linked_items) && column.linked_items.length) return column.linked_items.map(i => i.name).join(", ");
+      return "—";
+    }
+
+    function relationIds(column) {
+      return Array.isArray(column?.linked_item_ids) ? column.linked_item_ids.map(String) : [];
+    }
+
+    function peoplePayload(column) {
+      const arr = column?.persons_and_teams;
+      if (!Array.isArray(arr) || !arr.length) return null;
+      return { personsAndTeams: arr.map(p => ({ id: Number(p.id), kind: p.kind })) };
+    }
+
+    function locationPayload(column) {
+      if (!column || column.lat == null || column.lng == null || !column.address) return null;
+      return { lat: String(column.lat), lng: String(column.lng), address: column.address };
+    }
+
+    function locationText(column) {
+      return safeText(column?.address || column?.text);
+    }
+
+    function buildAutomaticName() {
+      const base = sourceItem?.name || parentCompany?.name || "Aktivitet";
+      const type = typeSelect.value || "[Vælg mødetype]";
+      return `${base} - ${type}`;
+    }
+
+    function refreshAutoName(force = false) {
+      const previousAutoName = autoName;
+      autoName = buildAutomaticName();
+      if (force || !nameTouched || nameInput.value === previousAutoName || !nameInput.value.trim()) {
+        nameInput.value = autoName;
+        nameTouched = false;
+      }
+    }
+
+    nameInput.addEventListener("input", () => {
+      nameTouched = nameInput.value !== autoName;
+    });
+
+    typeSelect.addEventListener("change", () => refreshAutoName(false));
+
+    async function api(query, variables = {}) {
+      const res = await monday.api(query, { variables, apiVersion: "2026-07" });
+      if (res.errors?.length) throw new Error(res.errors.map(e => e.message).join(" · "));
+      return res.data;
+    }
+
+    async function loadMeetingTypes() {
+      try {
+        const data = await api(`query ($board: [ID!]!) {
+          boards(ids: $board) {
+            columns(ids: ["${ACTIVITY_COL.type}"]) { id settings_str }
+          }
+        }`, { board: [String(ACTIVITY_BOARD_ID)] });
+        const settings = JSON.parse(data?.boards?.[0]?.columns?.[0]?.settings_str || "{}");
+        const labels = Object.values(settings.labels || {}).filter(Boolean);
+        labels.forEach(label => {
+          const option = document.createElement("option");
+          option.value = label;
+          option.textContent = label;
+          typeSelect.appendChild(option);
+        });
+      } catch (err) {
+        console.warn("Kunne ikke hente mødetypelabels", err);
+        ["Virksomhedsmøde", "Medlemsmøde", "Virtuelt virksomhedsmøde", "Virtuelt medlemsmøde", "Telefonmøde", "Medlem 1:1", "Seniormøde", "Drop-in", "Undervisning", "Webinar"].forEach(label => {
+          const option = document.createElement("option");
+          option.value = label;
+          option.textContent = label;
+          typeSelect.appendChild(option);
+        });
+      }
+    }
+
+    async function loadItem(itemId) {
+      const data = await api(`query ($ids: [ID!]!) {
+        items(ids: $ids) {
+          id
+          name
+          board { id }
+          parent_item { id name }
+          column_values {
+            id
+            text
+            value
+            ... on BoardRelationValue {
+              display_value
+              linked_item_ids
+              linked_items { id name }
+            }
+            ... on PeopleValue {
+              persons_and_teams { id kind }
+            }
+            ... on LocationValue {
+              address
+              lat
+              lng
+            }
+          }
+        }
+      }`, { ids: [String(itemId)] });
+      return data?.items?.[0] || null;
+    }
+
+    async function updateContext(ctx) {
+      appContext = ctx;
+      submitBtn.disabled = true;
+      statusBox.className = "statusbox";
+      const itemId = ctx?.itemId || ctx?.itemIds?.[0];
+      if (!itemId) throw new Error("Åbn formularen fra en virksomhed eller et arbejdssted.");
+
+      sourceItem = await loadItem(itemId);
+      if (!sourceItem) throw new Error("Elementet kunne ikke findes.");
+
+      const boardId = Number(sourceItem.board?.id);
+      if (boardId === COMPANY_BOARD_ID) {
+        isSubitem = false;
+        parentCompany = sourceItem;
+      } else if (boardId === SUBITEM_BOARD_ID) {
+        isSubitem = true;
+        const parentId = sourceItem.parent_item?.id;
+        if (!parentId) throw new Error("Arbejdsstedet mangler relation til hovedvirksomheden.");
+        parentCompany = await loadItem(parentId);
+        if (!parentCompany || Number(parentCompany.board?.id) !== COMPANY_BOARD_ID) {
+          throw new Error("Hovedvirksomheden kunne ikke findes.");
+        }
+      } else {
+        throw new Error("Formularen skal åbnes fra Virksomhedsportefølje eller et af dens subitems.");
+      }
+
+      const parentCols = byId(parentCompany);
+      const sourceCols = byId(sourceItem);
+
+      const cvr = safeText(parentCols[COMPANY_COL.cvr]?.text);
+      const pnumber = isSubitem ? safeText(sourceCols[SUBITEM_COL.pnumber]?.text) : "—";
+
+      const managerCol = isSubitem && peoplePayload(sourceCols[SUBITEM_COL.manager])
+        ? sourceCols[SUBITEM_COL.manager]
+        : parentCols[COMPANY_COL.manager];
+      const managerText = safeText(managerCol?.text || (isSubitem ? sourceCols[SUBITEM_COL.managerText]?.text : ""));
+
+      const contactsCol = isSubitem ? sourceCols[SUBITEM_COL.contacts] : parentCols[COMPANY_COL.contacts];
+      const locationCol = isSubitem ? sourceCols[SUBITEM_COL.location] : parentCols[COMPANY_COL.location];
+
+      el("company").textContent = parentCompany.name;
+      el("company").classList.remove("loading");
+      el("cvr").textContent = cvr;
+      el("pnumber").textContent = pnumber;
+      el("manager").textContent = managerText;
+      el("contacts").textContent = relationNames(contactsCol);
+      el("address").textContent = locationText(locationCol);
+
+      if (isSubitem) {
+        el("workplaceWrap").style.display = "block";
+        el("workplace").textContent = sourceItem.name;
+      } else {
+        el("workplaceWrap").style.display = "none";
+        el("workplace").textContent = "";
+      }
+
+      nameTouched = false;
+      refreshAutoName(true);
+      submitBtn.disabled = false;
+    }
+
+    async function preserveAndLink(boardId, itemId, columnId, existingIds, newId) {
+      const ids = [...new Set([...existingIds.map(String), String(newId)])].map(Number);
+      const values = { [columnId]: { item_ids: ids } };
+      await api(`mutation ($board: ID!, $item: ID!, $values: JSON!) {
+        change_multiple_column_values(board_id: $board, item_id: $item, column_values: $values) { id }
+      }`, {
+        board: String(boardId),
+        item: String(itemId),
+        values: JSON.stringify(values)
+      });
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (!sourceItem || !parentCompany) return;
+
+      const type = typeSelect.value;
+      const activityStatus = el("activityStatus").value;
+      const date = el("date").value;
+      const time = el("time").value;
+      const activityName = nameInput.value.trim();
+      if (!type || !activityStatus || !date || !time || !activityName) return;
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Opretter…";
+      statusBox.className = "statusbox";
+
+      try {
+        const parentCols = byId(parentCompany);
+        const sourceCols = byId(sourceItem);
+
+        const values = {
+          [ACTIVITY_COL.account]: { item_ids: [Number(parentCompany.id)] },
+          [ACTIVITY_COL.type]: { label: type },
+          [ACTIVITY_COL.date]: { date, time: `${time}:00` },
+          [ACTIVITY_COL.status]: { label: activityStatus }
+        };
+
+        const cvr = parentCols[COMPANY_COL.cvr]?.text?.trim();
+        if (cvr) values[ACTIVITY_COL.cvr] = cvr;
+
+        if (isSubitem) {
+          const pnumber = sourceCols[SUBITEM_COL.pnumber]?.text?.trim();
+          if (pnumber) values[ACTIVITY_COL.pnumber] = pnumber;
+        }
+
+        const managerCol = isSubitem && peoplePayload(sourceCols[SUBITEM_COL.manager])
+          ? sourceCols[SUBITEM_COL.manager]
+          : parentCols[COMPANY_COL.manager];
+        const manager = peoplePayload(managerCol);
+        if (manager) values[ACTIVITY_COL.manager] = manager;
+
+        const locationCol = isSubitem ? sourceCols[SUBITEM_COL.location] : parentCols[COMPANY_COL.location];
+        const location = locationPayload(locationCol);
+        if (location) values[ACTIVITY_COL.location] = location;
+
+        const result = await api(`mutation ($board: ID!, $group: String!, $name: String!, $values: JSON!) {
+          create_item(board_id: $board, group_id: $group, item_name: $name, column_values: $values) {
+            id
+            name
+          }
+        }`, {
+          board: String(ACTIVITY_BOARD_ID),
+          group: ACTIVITY_GROUP_ID,
+          name: activityName,
+          values: JSON.stringify(values)
+        });
+
+        const created = result?.create_item;
+        if (!created?.id) throw new Error("Aktiviteten blev ikke oprettet.");
+
+        // Sørg for, at aktivitetshistorikken kan ses fra hovedvirksomheden.
+        await preserveAndLink(
+          COMPANY_BOARD_ID,
+          parentCompany.id,
+          COMPANY_COL.activities,
+          relationIds(parentCols[COMPANY_COL.activities]),
+          created.id
+        );
+
+        // Ved arbejdssted: link også aktiviteten direkte til subitemets Activities-relation.
+        if (isSubitem) {
+          await preserveAndLink(
+            SUBITEM_BOARD_ID,
+            sourceItem.id,
+            SUBITEM_COL.activities,
+            relationIds(sourceCols[SUBITEM_COL.activities]),
+            created.id
+          );
+        }
+
+        showStatus(`Aktiviteten “${created.name}” er oprettet${isSubitem ? " på arbejdsstedet og hovedvirksomheden" : " på virksomheden"}.`, true);
+        nameTouched = false;
+        refreshAutoName(true);
+      } catch (err) {
+        console.error(err);
+        showStatus(err.message || "Der opstod en fejl ved oprettelsen.", false);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Opret aktivitet";
+      }
+    });
+
+    (async function start() {
+      try {
+        await loadMeetingTypes();
+        const res = await monday.get("context");
+        await updateContext(res.data);
+        monday.listen("context", async event => {
+          const nextId = event.data?.itemId || event.data?.itemIds?.[0];
+          const currentId = appContext?.itemId || appContext?.itemIds?.[0];
+          if (nextId && String(nextId) !== String(currentId)) {
+            try { await updateContext(event.data); }
+            catch (err) { showStatus(err.message, false); }
+          }
+        });
+      } catch (err) {
+        el("company").textContent = "Kunne ikke indlæse";
+        el("company").classList.remove("loading");
+        showStatus(err.message || "Formularen kunne ikke indlæses.", false);
+      }
+    })();
+  </script>
+</body>
+</html>
