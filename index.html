@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Opret ny aktivitet</title>
-  <script src="https://cdn.jsdelivr.net/npm/monday-sdk-js/dist/main.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/monday-sdk-js/dist/main.js"></script>
   <style>
     :root { font-family: Inter, Arial, sans-serif; color-scheme: light dark; }
     * { box-sizing: border-box; }
@@ -36,6 +36,7 @@
   <main class="card">
     <h1>Opret ny aktivitet</h1>
     <p class="intro">Opret en ny mødeaktivitet på Aktiviteter-tavlen.</p>
+    <div id="renderCheck" style="font-size:11px;opacity:.55;margin-bottom:10px">Formularen er indlæst · afventer monday-forbindelse</div>
 
     <form id="activityForm">
       <div class="grid">
@@ -124,7 +125,19 @@
   </main>
 
   <script>
-    const monday = mondaySdk();
+    let monday = null;
+
+    async function waitForMondaySdk(timeoutMs = 8000) {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        if (typeof window.mondaySdk === "function") {
+          monday = window.mondaySdk();
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      throw new Error("monday-SDK kunne ikke indlæses i denne visning. Kontrollér browser-/netværksblokering af cdn.jsdelivr.net.");
+    }
 
     const COMPANY_BOARD_ID = 5097412516;
     const SUBITEM_BOARD_ID = 5099929375;
@@ -467,6 +480,7 @@
 
     (async function start() {
       try {
+        await waitForMondaySdk();
         await loadMeetingTypes();
         const res = await monday.get("context");
         await updateContext(res.data);
