@@ -141,6 +141,7 @@
 
     const COMPANY_BOARD_ID = 5097412516;
     const SUBITEM_BOARD_ID = 5099929375;
+    const CONTACT_BOARD_ID = 5097412512;
     const ACTIVITY_BOARD_ID = 5097412508;
     const ACTIVITY_GROUP_ID = "topics";
 
@@ -170,8 +171,16 @@
       activities: "board_relation_mm5hnqk9"
     };
 
+    const CONTACT_COL = {
+      email: "contact_email",
+      account: "contact_account",
+      cvr: "text_mm53p1gj",
+      pnumber: "text_mm6d7ej1"
+    };
+
     const ACTIVITY_COL = {
       account: "board_relation_mm5h6fj",
+      contacts: "board_relation_mm57yf08",
       type: "activity_type",
       date: "activity_start_time",
       status: "activity_status",
@@ -238,6 +247,95 @@
 
     function relationIds(column) {
       return Array.isArray(column?.linked_item_ids) ? column.linked_item_ids.map(String) : [];
+    }
+
+    function normalizeEmail(value) {
+      return String(value || "").trim().toLowerCase();
+    }
+
+    function pnumberListContains(value, target) {
+      if (!target) return false;
+      return String(value || "")
+        .split(/[;,\n]/)
+        .map(v => v.trim())
+        .filter(Boolean)
+        .includes(String(target).trim());
+    }
+
+    async function resolveActivityContactIds(parentCols, sourceCols) {
+      const map = isSubitem ? SUBITEM_COL : COMPANY_COL;
+      const cols = isSubitem ? sourceCols : parentCols;
+
+      // 1) En eksisterende Contacts-relation er altid førstevalg.
+      const linkedIds = relationIds(cols[map.contacts]);
+      if (linkedIds.length) return linkedIds;
+
+      // 2) Ellers forsøger vi et sikkert opslag på den direkte kontakt-email.
+      const email = normalizeEmail(cols[map.contactEmail]?.text);
+      if (!email) return [];
+
+      const data = await api(`query ContactByEmail($board: ID!, $email: [String]!) {
+        items_page_by_column_values(
+          limit: 10
+          board_id: $board
+          columns: [{ column_id: "${CONTACT_COL.email}", column_values: $email }]
+        ) {
+          items {
+            id
+            name
+            column_values(ids: [
+              "${CONTACT_COL.email}",
+              "${CONTACT_COL.account}",
+              "${CONTACT_COL.cvr}",
+              "${CONTACT_COL.pnumber}"
+            ]) {
+              id
+              text
+              ... on BoardRelationValue {
+                linked_item_ids
+                linked_items { id name }
+              }
+            }
+          }
+        }
+      }`, {
+        board: String(CONTACT_BOARD_ID),
+        email: [email]
+      });
+
+      let candidates = (data?.items_page_by_column_values?.items || []).filter(item => {
+        const colsById = byId(item);
+        return normalizeEmail(colsById[CONTACT_COL.email]?.text) === email;
+      });
+
+      if (candidates.length === 1) return [String(candidates[0].id)];
+      if (!candidates.length) return [];
+
+      // Ved dubletter snævrer vi ind uden at gætte.
+      const parentId = String(parentCompany.id);
+      const cvr = parentCols[COMPANY_COL.cvr]?.text?.trim() || "";
+      const pnumber = isSubitem ? (sourceCols[SUBITEM_COL.pnumber]?.text?.trim() || "") : "";
+
+      const accountMatches = candidates.filter(item =>
+        relationIds(byId(item)[CONTACT_COL.account]).includes(parentId)
+      );
+      if (accountMatches.length) candidates = accountMatches;
+
+      if (candidates.length > 1 && cvr) {
+        const cvrMatches = candidates.filter(item =>
+          (byId(item)[CONTACT_COL.cvr]?.text?.trim() || "") === cvr
+        );
+        if (cvrMatches.length) candidates = cvrMatches;
+      }
+
+      if (candidates.length > 1 && pnumber) {
+        const pnumberMatches = candidates.filter(item =>
+          pnumberListContains(byId(item)[CONTACT_COL.pnumber]?.text, pnumber)
+        );
+        if (pnumberMatches.length) candidates = pnumberMatches;
+      }
+
+      return candidates.length === 1 ? [String(candidates[0].id)] : [];
     }
 
     function peoplePayload(column) {
@@ -457,6 +555,11 @@
           : parentCols[COMPANY_COL.manager];
         const manager = peoplePayload(managerCol);
         if (manager) values[ACTIVITY_COL.manager] = manager;
+
+        const contactIds = await resolveActivityContactIds(parentCols, sourceCols);
+        if (contactIds.length) {
+          values[ACTIVITY_COL.contacts] = { item_ids: contactIds.map(Number) };
+        }
 
         const locationCol = isSubitem ? sourceCols[SUBITEM_COL.location] : parentCols[COMPANY_COL.location];
         const location = locationPayload(locationCol);
