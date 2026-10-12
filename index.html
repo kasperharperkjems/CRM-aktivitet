@@ -205,7 +205,7 @@
     const typeSelect = el("type");
 
     const now = new Date();
-    el("date").value = now.toISOString().slice(0, 10);
+    el("date").value = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Copenhagen", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
     el("time").value = "10:00";
 
     function showStatus(message, ok) {
@@ -351,6 +351,37 @@
 
     function locationText(column) {
       return safeText(column?.address || column?.text);
+    }
+
+    // monday API expects a UTC date/time. The form captures Danish local time.
+    // Validate the conversion against Europe/Copenhagen to handle DST correctly.
+    function toMondayUtcDateTime(localDate, localTime) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate) || !/^\d{2}:\d{2}$/.test(localTime)) {
+        throw new Error("Ugyldig dato eller tidspunkt.");
+      }
+      const [y, mo, d] = localDate.split("-").map(Number);
+      const [h, mi] = localTime.split(":").map(Number);
+      if (h > 23 || mi > 59 || new Date(Date.UTC(y, mo - 1, d)).toISOString().slice(0, 10) !== localDate) {
+        throw new Error("Ugyldig dato eller tidspunkt.");
+      }
+      const formatter = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/Copenhagen", year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+      });
+      const matches = [];
+      // Copenhagen is UTC+1 in winter and UTC+2 in summer.
+      for (const offsetHours of [1, 2]) {
+        const utcMs = Date.UTC(y, mo - 1, d, h - offsetHours, mi);
+        const parts = Object.fromEntries(formatter.formatToParts(new Date(utcMs)).map(p => [p.type, p.value]));
+        if (`${parts.year}-${parts.month}-${parts.day}` === localDate &&
+            `${parts.hour}:${parts.minute}` === localTime) matches.push(utcMs);
+      }
+      if (matches.length !== 1) {
+        throw new Error(matches.length ? "Tidspunktet er tvetydigt ved skift til vintertid. Vælg et andet tidspunkt." :
+          "Tidspunktet findes ikke ved skift til sommertid. Vælg et andet tidspunkt.");
+      }
+      const iso = new Date(matches[0]).toISOString();
+      return { date: iso.slice(0, 10), time: iso.slice(11, 19) };
     }
 
     function buildAutomaticName() {
@@ -538,7 +569,7 @@
         const values = {
           [ACTIVITY_COL.account]: { item_ids: [Number(parentCompany.id)] },
           [ACTIVITY_COL.type]: { label: type },
-          [ACTIVITY_COL.date]: { date, time: `${time}:00` },
+          [ACTIVITY_COL.date]: toMondayUtcDateTime(date, time),
           [ACTIVITY_COL.status]: { label: activityStatus }
         };
 
