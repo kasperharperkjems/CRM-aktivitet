@@ -35,7 +35,7 @@
 <body>
   <main class="card">
     <h1>Opret ny aktivitet</h1>
-    <p class="intro">Opret enten en bookingopgave uden mødedato eller et egentligt møde på Aktiviteter-tavlen.</p>
+    <p class="intro">PILOT – test af bookingopgave og booket møde. <strong>Ingen aktiviteter gemmes i monday fra denne testversion.</strong></p>
     <div id="renderCheck" style="font-size:11px;opacity:.55;margin-bottom:10px">Formularen er indlæst · afventer monday-forbindelse</div>
 
     <form id="activityForm">
@@ -166,6 +166,7 @@
     const SUBITEM_BOARD_ID = 5099929375;
     const CONTACT_BOARD_ID = 5097412512;
     const ACTIVITY_BOARD_ID = 5097412508;
+    const PILOT_DRY_RUN = true; // Fail closed: all item/relation writes disabled for this isolated preview.
     const ACTIVITY_GROUP_ID = "topics";
     const PRE_ACTIVITY_GROUP_ID = "group_mm8dstew"; // Bookingopgaver (endnu ikke booket)
     const ACTIVITY_OWNERS = [
@@ -670,6 +671,16 @@
       }
       if (!pre && (!type || !activityStatus || !date || !time)) {
         showStatus("Udfyld mødetype, mødestatus, dato og tidspunkt.", false);
+        return;
+      }
+
+      if (PILOT_DRY_RUN) {
+        try {
+          if (!pre) toMondayUtcDateTime(date, time);
+          showStatus(`PILOT: Validering gennemført for ${pre ? "bookingopgave" : "booket møde"} “${activityName}” med ansvarlig ${owner}. Ingen aktivitet er oprettet eller ændret i monday.`, true);
+        } catch (err) {
+          showStatus(err.message || "Testen kunne ikke valideres.", false);
+        }
         return;
       }
 
