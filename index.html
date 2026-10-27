@@ -35,7 +35,7 @@
 <body>
   <main class="card">
     <h1>Opret ny aktivitet</h1>
-    <p class="intro">Opret enten en bookingopgave uden mødedato eller et egentligt møde på Aktiviteter-tavlen.</p>
+    <p class="intro">PILOT – test af bookingopgave og booket møde. <strong>Ingen aktiviteter gemmes i monday fra denne testversion.</strong></p>
     <div id="renderCheck" style="font-size:11px;opacity:.55;margin-bottom:10px">Formularen er indlæst · afventer monday-forbindelse</div>
 
     <form id="activityForm">
@@ -49,11 +49,16 @@
         </div>
 
         <div class="full">
-          <label for="entryMode">Opgavetype *</label>
-          <select id="entryMode" required>
-            <option value="meeting">Booket møde</option>
-            <option value="preactivity">Bookingopgave (endnu ikke booket)</option>
+          <label for="activityFlowStatus">Aktivitetsstatus *</label>
+          <select id="activityFlowStatus" required>
+            <option value="Skal bookes">Skal bookes</option>
+            <option value="Afventer svar">Afventer svar</option>
+            <option value="Ring senere">Ring senere</option>
+            <option value="Genbooking">Genbooking</option>
+            <option value="Opfølgning">Opfølgning</option>
+            <option value="Kommende møde">Booket møde</option>
           </select>
+          <div class="hint">Vælg, hvor langt aktiviteten er i forløbet. Booket møde bliver registreret som Kommende møde i monday. Kun kundechefen kan efterfølgende markere det som Afholdt møde.</div>
         </div>
 
         <div class="full">
@@ -64,27 +69,10 @@
           <div class="hint">Kan være en anden end virksomhedens kundechef. Bruges til de personlige aktivitetsdashboards.</div>
         </div>
 
-        <div id="bookingProcessWrap" class="full" style="display:none">
-          <label for="bookingProcess">Bookingproces *</label>
-          <select id="bookingProcess">
-            <option value="">– Vælg bookingstatus –</option>
-          </select>
-          <div class="hint">Bookingopgaver oprettes uden mødedato, mødetype og mødestatus. Bookingdato-automationen skal tilpasses inden idriftsættelse.</div>
-        </div>
-
         <div id="typeWrap">
           <label for="type">Mødetype *</label>
           <select id="type" required>
             <option value="">– Vælg mødetype –</option>
-          </select>
-        </div>
-
-        <div id="activityStatusWrap">
-          <label for="activityStatus">Mødestatus *</label>
-          <select id="activityStatus" required>
-            <option value="Kommende møde">Kommende møde</option>
-            <option value="Afholdt møde">Afholdt møde</option>
-            <option value="Aflyst møde">Aflyst møde</option>
           </select>
         </div>
 
@@ -166,6 +154,7 @@
     const SUBITEM_BOARD_ID = 5099929375;
     const CONTACT_BOARD_ID = 5097412512;
     const ACTIVITY_BOARD_ID = 5097412508;
+    const PILOT_DRY_RUN = true; // Fail closed: all item/relation writes disabled for this isolated preview.
     const ACTIVITY_GROUP_ID = "topics";
     const PRE_ACTIVITY_GROUP_ID = "group_mm8dstew"; // Bookingopgaver (endnu ikke booket)
     const ACTIVITY_OWNERS = [
@@ -235,9 +224,10 @@
     const statusBox = el("statusBox");
     const nameInput = el("activityName");
     const typeSelect = el("type");
-    const modeSelect = el("entryMode");
+    const flowStatusSelect = el("activityFlowStatus");
     const ownerSelect = el("activityOwner");
-    const bookingProcessSelect = el("bookingProcess");
+    const PILOT_BOOKING_STATUSES = ["Skal bookes", "Afventer svar", "Ring senere", "Genbooking", "Opfølgning"];
+    let availableBookingStages = new Set();
     let bookingStagesLoaded = false;
 
     ACTIVITY_OWNERS.forEach(owner => {
@@ -429,7 +419,7 @@
 
     function buildAutomaticName() {
       const base = sourceItem?.name || parentCompany?.name || "Aktivitet";
-      if (modeSelect.value === "preactivity") return `${base} - Bookingopgave`;
+      if (flowStatusSelect.value !== "Kommende møde") return `${base} - Bookingopgave`;
       const type = typeSelect.value || "[Vælg mødetype]";
       return `${base} - ${type}`;
     }
@@ -449,28 +439,26 @@
 
     typeSelect.addEventListener("change", () => refreshAutoName(false));
 
-    function syncEntryMode() {
-      const pre = modeSelect.value === "preactivity";
-      el("bookingProcessWrap").style.display = pre ? "block" : "none";
-      for (const id of ["typeWrap", "activityStatusWrap", "dateWrap", "timeWrap"]) {
+    function syncActivityStatus() {
+      const pre = flowStatusSelect.value !== "Kommende møde";
+      for (const id of ["typeWrap", "dateWrap", "timeWrap"]) {
         el(id).style.display = pre ? "none" : "block";
       }
-      bookingProcessSelect.required = pre;
-      for (const id of ["type", "activityStatus", "date", "time"]) {
+      for (const id of ["type", "date", "time"]) {
         el(id).required = !pre;
       }
       submitBtn.disabled = !sourceItem || !parentCompany || (pre && !bookingStagesLoaded);
-      submitBtn.textContent = pre ? "Opret bookingopgave" : "Opret møde";
+      submitBtn.textContent = pre ? "Test bookingopgave" : "Test booket møde";
       if (pre && !bookingStagesLoaded) {
-        showStatus("Bookingproces kunne ikke indlæses fra Aktiviteter. Bookingopgaven kan ikke oprettes, før kolonnen er tilgængelig.", false);
+        showStatus("Bookingproces kunne ikke indlæses fra Aktiviteter. Piloten er sat på pause, indtil kolonnen er tilgængelig.", false);
       } else {
         statusBox.className = "statusbox";
       }
       refreshAutoName(false);
     }
 
-    modeSelect.addEventListener("change", syncEntryMode);
-    syncEntryMode();
+    flowStatusSelect.addEventListener("change", syncActivityStatus);
+    syncActivityStatus();
 
     async function api(query, variables = {}) {
       const res = await monday.api(query, { variables, apiVersion: "2026-07" });
@@ -514,22 +502,18 @@
         const col = data?.boards?.[0]?.columns?.[0];
         if (col?.id !== ACTIVITY_COL.bookingProcess) throw new Error("Kolonnen Bookingproces findes ikke.");
         const settings = JSON.parse(col.settings_str || "{}");
-        const labels = [...new Set(Object.values(settings.labels || {}).map(value =>
+        const labels = Object.values(settings.labels || {}).map(value =>
           typeof value === "string" ? value : value?.label
-        ).filter(label => label && label !== "Aflyst møde"))];
-        if (!labels.includes("Skal bookes")) throw new Error("Bookingproces mangler den forventede status 'Skal bookes'.");
-        labels.forEach(label => {
-          const option = document.createElement("option");
-          option.value = label;
-          option.textContent = label;
-          bookingProcessSelect.appendChild(option);
-        });
+        ).filter(Boolean);
+        availableBookingStages = new Set(labels);
+        const missing = PILOT_BOOKING_STATUSES.filter(label => !availableBookingStages.has(label));
+        if (missing.length) throw new Error(`Bookingproces mangler forventede værdier: ${missing.join(", ")}`);
         bookingStagesLoaded = true;
       } catch (err) {
         bookingStagesLoaded = false;
         console.warn("Bookingproces kunne ikke indlæses", err);
       }
-      syncEntryMode();
+      syncActivityStatus();
     }
 
     async function loadItem(itemId) {
@@ -633,7 +617,7 @@
 
       nameTouched = false;
       refreshAutoName(true);
-      syncEntryMode();
+      syncActivityStatus();
     }
 
     async function preserveAndLink(boardId, itemId, columnId, existingIds, newId) {
@@ -652,11 +636,11 @@
       event.preventDefault();
       if (!sourceItem || !parentCompany) return;
 
-      const pre = modeSelect.value === "preactivity";
+      const pre = flowStatusSelect.value !== "Kommende møde";
       const owner = ownerSelect.value;
       const type = typeSelect.value;
-      const activityStatus = el("activityStatus").value;
-      const bookingStage = bookingProcessSelect.value;
+      const activityStatus = pre ? "" : "Kommende møde";
+      const bookingStage = pre ? flowStatusSelect.value : "";
       const date = el("date").value;
       const time = el("time").value;
       const activityName = nameInput.value.trim();
@@ -664,12 +648,22 @@
         showStatus("Vælg en gyldig aktivitetsansvarlig og udfyld aktivitetsnavnet.", false);
         return;
       }
-      if (pre && (!bookingStagesLoaded || ![...bookingProcessSelect.options].some(o => o.value === bookingStage && bookingStage))) {
+      if (pre && (!bookingStagesLoaded || !availableBookingStages.has(bookingStage))) {
         showStatus("Vælg en gyldig bookingprocesstatus.", false);
         return;
       }
       if (!pre && (!type || !activityStatus || !date || !time)) {
         showStatus("Udfyld mødetype, mødestatus, dato og tidspunkt.", false);
+        return;
+      }
+
+      if (PILOT_DRY_RUN) {
+        try {
+          if (!pre) toMondayUtcDateTime(date, time);
+          showStatus(`PILOT: Validering gennemført for ${pre ? "bookingopgave" : "booket møde"} “${activityName}”. Status: ${pre ? bookingStage : "Booket møde (monday: Kommende møde)"}. Ansvarlig og fremtidig notifikationsmodtager: ${owner}. Ingen aktivitet er oprettet eller ændret i monday.`, true);
+        } catch (err) {
+          showStatus(err.message || "Testen kunne ikke valideres.", false);
+        }
         return;
       }
 
@@ -702,11 +696,13 @@
           if (pnumber) values[ACTIVITY_COL.pnumber] = pnumber;
         }
 
-        const managerCol = isSubitem && peoplePayload(sourceCols[SUBITEM_COL.manager])
-          ? sourceCols[SUBITEM_COL.manager]
-          : parentCols[COMPANY_COL.manager];
-        const manager = peoplePayload(managerCol);
-        if (manager) values[ACTIVITY_COL.manager] = manager;
+        // Aktivitetens personkolonne skal matche den valgte aktivitetsansvarlige,
+        // ikke nødvendigvis virksomhedens kundechef.
+        const selectedOwner = ACTIVITY_OWNERS.find(person => person.name === owner);
+        if (!selectedOwner) throw new Error("Aktivitetsansvarlig kunne ikke knyttes til en monday-bruger.");
+        values[ACTIVITY_COL.manager] = {
+          personsAndTeams: [{ id: selectedOwner.id, kind: "person" }]
+        };
 
         const contactIds = await resolveActivityContactIds(parentCols, sourceCols);
         if (contactIds.length) {
@@ -762,7 +758,7 @@
         }
       } finally {
         submitBtn.disabled = false;
-        submitBtn.textContent = pre ? "Opret bookingopgave" : "Opret møde";
+        submitBtn.textContent = pre ? "Test bookingopgave" : "Test booket møde";
       }
     });
 
