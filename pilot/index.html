@@ -54,6 +54,8 @@
             <option value="Skal bookes">Skal bookes</option>
             <option value="Afventer svar">Afventer svar</option>
             <option value="Ring senere">Ring senere</option>
+            <option value="Sendt info mail">Sendt info mail</option>
+            <option value="Sendt datoforslag">Sendt datoforslag</option>
             <option value="Genbooking">Genbooking</option>
             <option value="Opfølgning">Opfølgning</option>
             <option value="Kommende møde">Booket møde</option>
@@ -226,9 +228,12 @@
     const typeSelect = el("type");
     const flowStatusSelect = el("activityFlowStatus");
     const ownerSelect = el("activityOwner");
-    const PILOT_BOOKING_STATUSES = ["Skal bookes", "Afventer svar", "Ring senere", "Genbooking", "Opfølgning"];
+    const PILOT_BOOKING_STATUSES = ["Skal bookes", "Afventer svar", "Ring senere", "Sendt info mail", "Sendt datoforslag", "Genbooking", "Opfølgning"];
     let availableBookingStages = new Set();
     let bookingStagesLoaded = false;
+    let isSubmitting = false;
+    let createSucceeded = false;
+    let createMayHaveSucceeded = false;
 
     ACTIVITY_OWNERS.forEach(owner => {
       const option = document.createElement("option");
@@ -447,11 +452,11 @@
       for (const id of ["type", "date", "time"]) {
         el(id).required = !pre;
       }
-      submitBtn.disabled = !sourceItem || !parentCompany || (pre && !bookingStagesLoaded);
-      submitBtn.textContent = pre ? "Test bookingopgave" : "Test booket møde";
+      submitBtn.disabled = isSubmitting || createSucceeded || createMayHaveSucceeded || !sourceItem || !parentCompany || (pre && !bookingStagesLoaded);
+      submitBtn.textContent = createSucceeded ? "Aktivitet oprettet" : createMayHaveSucceeded ? "Kontrollér aktivitet i monday" : isSubmitting ? "Opretter…" : pre ? (PILOT_DRY_RUN ? "Test bookingopgave" : "Opret bookingopgave") : (PILOT_DRY_RUN ? "Test booket møde" : "Opret møde");
       if (pre && !bookingStagesLoaded) {
         showStatus("Bookingproces kunne ikke indlæses fra Aktiviteter. Piloten er sat på pause, indtil kolonnen er tilgængelig.", false);
-      } else {
+      } else if (!createSucceeded && !createMayHaveSucceeded) {
         statusBox.className = "statusbox";
       }
       refreshAutoName(false);
@@ -547,7 +552,10 @@
     }
 
     async function updateContext(ctx) {
+      if (isSubmitting) return;
       appContext = ctx;
+      createSucceeded = false;
+      createMayHaveSucceeded = false;
       submitBtn.disabled = true;
       statusBox.className = "statusbox";
       const itemId = ctx?.itemId || ctx?.itemIds?.[0];
@@ -634,7 +642,7 @@
 
     form.addEventListener("submit", async event => {
       event.preventDefault();
-      if (!sourceItem || !parentCompany) return;
+      if (isSubmitting || createSucceeded || createMayHaveSucceeded || !sourceItem || !parentCompany) return;
 
       const pre = flowStatusSelect.value !== "Kommende møde";
       const owner = ownerSelect.value;
@@ -667,6 +675,7 @@
         return;
       }
 
+      isSubmitting = true;
       submitBtn.disabled = true;
       submitBtn.textContent = "Opretter…";
       statusBox.className = "statusbox";
@@ -713,6 +722,7 @@
         const location = locationPayload(locationCol);
         if (location) values[ACTIVITY_COL.location] = location;
 
+        createMayHaveSucceeded = true; // Once submitted, an ambiguous API failure must never trigger a blind retry.
         const result = await api(`mutation ($board: ID!, $group: String!, $name: String!, $values: JSON!) {
           create_item(board_id: $board, group_id: $group, item_name: $name, column_values: $values) {
             id
@@ -726,7 +736,9 @@
         });
 
         created = result?.create_item;
-        if (!created?.id) throw new Error("Aktiviteten blev ikke oprettet.");
+        if (!created?.id) throw new Error("Aktiviteten blev ikke bekræftet oprettet.");
+        createSucceeded = true;
+        createMayHaveSucceeded = false;
 
         await preserveAndLink(
           COMPANY_BOARD_ID,
@@ -753,12 +765,15 @@
         console.error(err);
         if (created?.id) {
           showStatus(`Aktiviteten (ID ${created.id}) ER oprettet, men tilbagelinkningen fejlede: ${err.message}. Opret den ikke igen; kontroller relationerne i monday.`, false);
+        } else if (createMayHaveSucceeded) {
+          showStatus(`Det er usikkert, om aktiviteten blev oprettet: ${err.message}. Opret den IKKE igen, før du har kontrolleret Aktivitetsboardet.`, false);
         } else {
-          showStatus(err.message || "Der opstod en fejl ved oprettelsen.", false);
+          showStatus(err.message || "Der opstod en fejl før oprettelsen.", false);
         }
       } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = pre ? "Test bookingopgave" : "Test booket møde";
+        isSubmitting = false;
+        submitBtn.disabled = createSucceeded || createMayHaveSucceeded || !sourceItem || !parentCompany || (pre && !bookingStagesLoaded);
+        submitBtn.textContent = createSucceeded ? "Aktivitet oprettet" : createMayHaveSucceeded ? "Kontrollér aktivitet i monday" : pre ? (PILOT_DRY_RUN ? "Test bookingopgave" : "Opret bookingopgave") : (PILOT_DRY_RUN ? "Test booket møde" : "Opret møde");
       }
     });
 
