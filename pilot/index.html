@@ -665,16 +665,6 @@
         return;
       }
 
-      if (PILOT_DRY_RUN) {
-        try {
-          if (!pre) toMondayUtcDateTime(date, time);
-          showStatus(`PILOT: Validering gennemført for ${pre ? "bookingopgave" : "booket møde"} “${activityName}”. Status: ${pre ? bookingStage : "Booket møde (monday: Kommende møde)"}. Ansvarlig og fremtidig notifikationsmodtager: ${owner}. Ingen aktivitet er oprettet eller ændret i monday.`, true);
-        } catch (err) {
-          showStatus(err.message || "Testen kunne ikke valideres.", false);
-        }
-        return;
-      }
-
       isSubmitting = true;
       submitBtn.disabled = true;
       submitBtn.textContent = "Opretter…";
@@ -721,6 +711,18 @@
         const locationCol = isSubitem ? sourceCols[SUBITEM_COL.location] : parentCols[COMPANY_COL.location];
         const location = locationPayload(locationCol);
         if (location) values[ACTIVITY_COL.location] = location;
+
+        if (PILOT_DRY_RUN) {
+          // Full Item View dry-run: read-only source, contact and column validation.
+          // Abort before create_item and all change_multiple_column_values mutations.
+          const stage = pre ? bookingStage : "Booket møde (monday: Kommende møde)";
+          const groupName = pre ? "Bookingopgaver (endnu ikke booket)" : "Kommende møder";
+          const companyName = parentCompany.name;
+          const existingActivities = relationIds(parentCols[COMPANY_COL.activities]).length;
+          const workplace = isSubitem ? `Arbejdssted: ${sourceItem.name}; P-nummer: ${values[ACTIVITY_COL.pnumber] || "mangler"}.` : "Hovedvirksomhed.";
+          showStatus(`PILOT: Fuld skrivebeskyttet Item View-kontrol bestået for “${activityName}”. Status: ${stage}. Ansvarlig og fremtidig notifikationsmodtager: ${owner}. Virksomhedsrelation: ${companyName} (item ${parentCompany.id}; CVR ${cvr || "mangler"}). ${workplace} Kontakter klar til tilknytning: ${contactIds.length}. Eksisterende virksomhedsaktiviteter: ${existingActivities}. Målgruppe på Aktiviteter: ${groupName}. Lokation: ${location ? "ja" : "ikke udfyldt"}. Ingen aktivitet eller relation er oprettet eller ændret i monday.`, true);
+          return;
+        }
 
         createMayHaveSucceeded = true; // Once submitted, an ambiguous API failure must never trigger a blind retry.
         const result = await api(`mutation ($board: ID!, $group: String!, $name: String!, $values: JSON!) {
