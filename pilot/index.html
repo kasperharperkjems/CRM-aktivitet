@@ -35,7 +35,7 @@
 <body>
   <main class="card">
     <h1>Opret ny aktivitet</h1>
-    <p class="intro">PILOT – test af bookingopgave og booket møde. <strong>Ingen aktiviteter gemmes i monday fra denne testversion.</strong></p>
+    <p class="intro">Opret en bookingopgave eller et booket møde på Aktiviteter. Aktiviteten kobles til den valgte virksomhed.</p>
     <div id="renderCheck" style="font-size:11px;opacity:.55;margin-bottom:10px">Formularen er indlæst · afventer monday-forbindelse</div>
 
     <form id="activityForm">
@@ -60,7 +60,7 @@
             <option value="Opfølgning">Opfølgning</option>
             <option value="Kommende møde">Booket møde</option>
           </select>
-          <div class="hint">Vælg, hvor langt aktiviteten er i forløbet. Booket møde bliver registreret som Kommende møde i monday. Kun kundechefen kan efterfølgende markere det som Afholdt møde.</div>
+          <div class="hint">Vælg, hvor langt aktiviteten er i forløbet. Booket møde registreres med status Booket møde i monday. Kun kundechefen kan efterfølgende markere det som Afholdt møde.</div>
         </div>
 
         <div class="full">
@@ -467,7 +467,14 @@
 
     async function api(query, variables = {}) {
       const res = await monday.api(query, { variables, apiVersion: "2026-07" });
-      if (res.errors?.length) throw new Error(res.errors.map(e => e.message).join(" · "));
+      if (res.errors?.length) {
+        const err = new Error(res.errors.map(e => {
+          const code = e.extensions?.code;
+          return e.message + (code ? ` [${code}]` : "");
+        }).join(" · "));
+        err.graphqlErrors = res.errors;
+        throw err;
+      }
       return res.data;
     }
 
@@ -647,7 +654,8 @@
       const pre = flowStatusSelect.value !== "Kommende møde";
       const owner = ownerSelect.value;
       const type = typeSelect.value;
-      const activityStatus = pre ? "" : "Kommende møde";
+      // "Kommende møde" er formularens valg. Status-kolonnen på Aktiviteter bruger "Booket møde".
+      const activityStatus = pre ? "" : "Booket møde";
       const bookingStage = pre ? flowStatusSelect.value : "";
       const date = el("date").value;
       const time = el("time").value;
@@ -715,7 +723,7 @@
         if (PILOT_DRY_RUN) {
           // Full Item View dry-run: read-only source, contact and column validation.
           // Abort before create_item and all change_multiple_column_values mutations.
-          const stage = pre ? bookingStage : "Booket møde (monday: Kommende møde)";
+          const stage = pre ? bookingStage : "Booket møde";
           const groupName = pre ? "Bookingopgaver (endnu ikke booket)" : "Kommende møder";
           const companyName = parentCompany.name;
           const existingActivities = relationIds(parentCols[COMPANY_COL.activities]).length;
@@ -768,7 +776,13 @@
         if (created?.id) {
           showStatus(`Aktiviteten (ID ${created.id}) ER oprettet, men tilbagelinkningen fejlede: ${err.message}. Opret den ikke igen; kontroller relationerne i monday.`, false);
         } else if (createMayHaveSucceeded) {
-          showStatus(`Det er usikkert, om aktiviteten blev oprettet: ${err.message}. Opret den IKKE igen, før du har kontrolleret Aktivitetsboardet.`, false);
+          const graphqlValidation = /graphql validation errors|graphql.validation.failed/i.test(err.message || "") ||
+            err.graphqlErrors?.some(e => /validation/i.test(String(e.extensions?.code || e.message || "")));
+          if (graphqlValidation) {
+            showStatus(`Monday afviste oprettelsesforespørgslen ved GraphQL-validering: ${err.message}. Der er ikke bekræftet noget aktivitets-ID. Kontrollér Aktiviteter-boardet, og kontakt CRM-ansvarlig før et nyt forsøg.`, false);
+          } else {
+            showStatus(`Det er usikkert, om aktiviteten blev oprettet: ${err.message}. Opret den IKKE igen, før du har kontrolleret Aktivitetsboardet.`, false);
+          }
         } else {
           showStatus(err.message || "Der opstod en fejl før oprettelsen.", false);
         }
